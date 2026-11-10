@@ -4,3 +4,11 @@ build/
 *.asc
 *.bin
 __pycache__/
+sw/trade_demo.s
+sw/trade_demo.hex
+demo.json
+demo.asc
+demo.bin
+game_top.json
+game_top.asc
+game_top.bin
