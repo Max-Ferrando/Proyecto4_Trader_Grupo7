@@ -1,0 +1,13 @@
+Patrimonio final:          31558
+Ordenes ejecutadas:        533
+Perdida maxima:            4476
+No operar:                 10000
+Comprar y mantener:        6497
+Peor caso precio->decision: 1628 ciclos (disponibles: 2262)
+Detalle por tick en decisiones.csv
+PASS MISO sin valores X
+PASS el programa escribe DECISION
+PASS el programa lee todos los precios
+PASS la decision llega antes del siguiente tick
+Testbenchs aprobados: 4/4
+/tmp/claude-0/-home-claude/204dcd16-6e17-55c8-bd8a-8992a71c3848/scratchpad/full/tb_full.sv:149: $finish called at 2000004000000 (1ps)

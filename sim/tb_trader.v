@@ -1,6 +1,6 @@
 // tb_trader.v - Emula a la FPGA maestra del Proyecto 4 y mide cada tick.
 //
-// * Instancia game_top (el mismo top que va a la Go Board) con sw/trade.hex
+// * Instancia pochoco_soc (el mismo top que va a la Go Board) con sw/trade.hex
 //   (o el archivo dado con -DPOCHOCO_MEMFILE).
 // * Por cada tick: baja CS_n, envia el precio por SPI modo 0 (CPOL=0, CPHA=0,
 //   MSB primero, SCLK ~0,96 MHz), lee por MISO el byte de DECISION y sube CS_n.
@@ -29,7 +29,7 @@ module tb_trader;
   wire miso;
   wire [3:0] led;
 
-  game_top dut (
+  pochoco_soc dut (
     .i_Clk      (clk),
     .o_LED      (led),
     .i_Switch   (4'b0000),
@@ -52,19 +52,19 @@ module tb_trader;
   integer pc_ic  [0:511];
   integer k0;
   initial for (k0 = 0; k0 < 512; k0 = k0 + 1) begin pc_cyc[k0] = 0; pc_ic[k0] = 0; end
-  wire [8:0] pc_w = dut.u_soc.u_core.u_id.pc_id_i[10:2];
+  wire [8:0] pc_w = dut.u_core.u_id.pc_id_i[10:2];
   always @(posedge clk) begin
     cyc <= cyc + 1;
-    if (dut.u_soc.u_core.u_id.commit) ic <= ic + 1;
+    if (dut.u_core.u_id.commit) ic <= ic + 1;
     if (tick_id >= 0) begin
       pc_cyc[pc_w] = pc_cyc[pc_w] + 1;
-      if (dut.u_soc.u_core.u_id.commit) pc_ic[pc_w] = pc_ic[pc_w] + 1;
+      if (dut.u_core.u_id.commit) pc_ic[pc_w] = pc_ic[pc_w] + 1;
     end
   end
 
-  wire spi_byte_done = dut.u_soc.u_spi.byte_done;
-  wire spi_wr_dec    = dut.u_soc.u_spi.wr & (dut.u_soc.u_spi.off == 6'd2);
-  wire spi_rd_status = dut.u_soc.u_spi.rd & (dut.u_soc.u_spi.off == 6'd0);
+  wire spi_byte_done = dut.u_spi.byte_done;
+  wire spi_wr_dec    = dut.u_spi.wr & (dut.u_spi.off == 6'd2);
+  wire spi_rd_status = dut.u_spi.rd & (dut.u_spi.off == 6'd0);
 
   // ---------------- medicion por tick ----------------
   integer t_arr, ic_arr;

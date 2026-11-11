@@ -1,17 +1,15 @@
 """trade_ref.py - Modelo de referencia EXACTO de sw/trade.s.
 
-Es el mismo algoritmo que strategies.SmaCross, pero escrito como lo ejecuta el
-Espino: buffer circular de L precios, sumas moviles que se actualizan con una
-suma y una resta, multiplicacion por constante con sumas repetidas y la
-cantidad a comprar con un lazo de sumas (sin MUL, DIV ni shifts).
+Algoritmo: reversion a la media (strategies.MeanRevert2) escrito como lo
+ejecuta el Espino: buffer circular de L precios, suma movil actualizada con una
+suma y una resta, L*p con duplicaciones (sin MUL ni shifts) y la cantidad a
+comprar con un lazo de sumas.
 
 Uso:
-  python3 algo/trade_ref.py serie.csv [-o decisiones.txt]
-    -> escribe un byte de decision (hex) por tick y las metricas de la 3.1.
-  python3 algo/trade_ref.py --check
-    -> comprueba que coincide con strategies.SmaCross en todas las series.
+  python3 algo/trade_ref.py tb/practica.csv [-o decisiones.txt]
+  python3 algo/trade_ref.py --check     (coincide con strategies.MeanRevert2)
 
-Los parametros S, L, M deben ser los mismos .equ de sw/trade.s.
+Los parametros L, TIN, TOUT deben ser los mismos .equ de sw/trade.s.
 """
 import argparse
 import sys
@@ -20,31 +18,42 @@ import market
 import series
 import strategies
 
-S = 3          # ventana corta (ticks)
-L = 10         # ventana larga (ticks), maximo 64
-M = 1          # histeresis: margen en unidades de precio
+L = 60         # ventana de la media (ticks), maximo 64
+TIN = 4        # comprar si el precio esta TIN unidades bajo la media
+TOUT = 0       # vender si el precio esta TOUT unidades sobre la media
 FEE = market.FEE
 CASH0 = market.CASH0
 
 
 class TradeRef:
-    def __init__(self, S=S, L=L, M=M, cash0=CASH0, fee=FEE):
-        self.S, self.L, self.M, self.fee = S, L, M, fee
+    def __init__(self, L=L, tin=TIN, tout=TOUT, cash0=CASH0, fee=FEE):
+        self.L, self.tin, self.tout, self.fee = L, tin, tout, fee
         self.cash, self.shares = cash0, 0       # s1, tp
         self.pending = 0                        # gp: ultimo byte escrito en DECISION
         self.buf = [0] * L                      # buffer circular en RAM
-        self.idx = 0                            # a4 (en palabras aqui; en bytes en asm)
-        self.count = 0                          # a5: precios recibidos, satura en L
-        self.sum_s = self.sum_l = 0             # a2, a3
-        self.want = 0                           # sp: 1 = quiero estar comprado
+        self.idx = 0                            # a4
+        self.count = 0                          # a5
+        self.sum_l = 0                          # a3
+        self.want = 0                           # sp
 
     def afford(self, p, qmax):
-        """Mayor n <= qmax con fee + n*p <= caja. Devuelve (n, costo = fee + n*p)."""
+        """Mayor n <= qmax con fee + n*p <= caja. Devuelve (n, costo)."""
         n, cost = 0, self.fee
         while n < qmax and cost + p <= self.cash:
             cost += p
             n += 1
         return n, cost
+
+    @staticmethod
+    def mul_const(x, k):
+        """x*k con duplicaciones: recorre los bits de k (8 bits) con una mascara."""
+        acc, pw, mask = 0, x, 1
+        while mask < 256:
+            if k & mask:
+                acc += pw
+            pw += pw
+            mask += mask
+        return acc
 
     def step(self, p):
         # 1) La maestra ejecuto el byte anterior al precio p: copia propia
@@ -60,29 +69,21 @@ class TradeRef:
                 acc = 0
                 for _ in range(n):           # n*p con sumas
                     acc += p
-                self.cash += acc - self.fee
-                self.shares -= n
-        # 2) Ventanas moviles
-        old_l = self.buf[self.idx]
-        old_s = self.buf[(self.idx + self.L - self.S) % self.L]
-        self.sum_l += p - old_l
-        self.sum_s += p - old_s
+                if self.cash + acc >= self.fee:
+                    self.cash += acc - self.fee
+                    self.shares -= n
+        # 2) Ventana movil
+        self.sum_l += p - self.buf[self.idx]
         self.buf[self.idx] = p
         self.idx = (self.idx + 1) % self.L
         if self.count < self.L:
             self.count += 1
-        # 3) Senal: L*sum_s - S*sum_l comparado con M*S*L
+        # 3) Senal: d = L*p - suma
         if self.count == self.L:
-            a = 0
-            for _ in range(self.L):
-                a += self.sum_s
-            b = 0
-            for _ in range(self.S):
-                b += self.sum_l
-            diff, thr = a - b, self.M * self.S * self.L
-            if diff > thr:
+            d = self.mul_const(p, self.L) - self.sum_l
+            if d < -self.tin * self.L:
                 self.want = 1
-            elif diff < -thr:
+            elif d > self.tout * self.L:
                 self.want = 0
         # 4) Cantidad
         if self.want:
@@ -96,14 +97,16 @@ class TradeRef:
 
 
 def check(seeds=10):
+    suite = dict(series.suite(seeds))
+    suite[("practica", 0)] = series.load_csv("../tb/practica.csv") if __import__("os").path.exists("../tb/practica.csv") else series.load_csv("tb/practica.csv")
     bad = 0
-    for key, prices in series.suite(seeds).items():
+    for key, prices in suite.items():
         a = market.run(prices, TradeRef())["decisions"]
-        b = market.run(prices, strategies.SmaCross(S, L, M))["decisions"]
+        b = market.run(prices, strategies.MeanRevert2(L, TIN, TOUT))["decisions"]
         if a != b:
             bad += 1
             print("DIFERENTE:", key)
-    print(f"trade_ref == SmaCross en {len(series.suite(seeds)) - bad} de {len(series.suite(seeds))} series")
+    print(f"trade_ref == MeanRevert2 en {len(suite) - bad} de {len(suite)} series")
     return bad == 0
 
 
@@ -117,15 +120,15 @@ def main():
         sys.exit(0 if check() else 1)
     prices = series.load_csv(a.csv)
     res = market.run(prices, TradeRef())
-    bh = market.run(prices, market.BuyAndHold())
     hold = market.run(prices, market.Hold())
     if a.out:
         with open(a.out, "w") as fh:
             for b in res["decisions"]:
                 fh.write(f"{b:02x}\n")
-    for name, r in (("trade (SMA)", res), ("comprar y mantener", bh), ("no operar", hold)):
-        print(f"{name:20s} final=${r['final']:>9,}  ordenes={r['orders']:4d}  comisiones=${r['fees']:>6,}  "
-              f"MDD=${r['max_drawdown']:>7,} ({r['max_drawdown_pct']:.1f}%)")
+    print(f"{'trade.s':22s} final=${res['final']:>9,}  ordenes={res['orders']:4d}  comisiones=${res['fees']:>6,}  "
+          f"perdida max=${res['max_drawdown']:>7,} ({res['max_drawdown_pct']:.1f}%)")
+    print(f"{'comprar y mantener':22s} final=${market.buy_and_hold_official(prices):>9,}  (definicion del testbench oficial)")
+    print(f"{'no operar':22s} final=${hold['final']:>9,}")
 
 
 if __name__ == "__main__":

@@ -4,27 +4,29 @@
                     #
                     # Ensamblar:  python3 tools/rvasm.py sw/trade.s -o sw/trade.hex -l sw/trade.lst
                     #
-                    # ALGORITMO (cruce de medias moviles, version de referencia: algo/trade_ref.py)
-                    #   * Media corta de S precios y media larga de L precios. Si la corta supera
-                    #     a la larga por mas de M (en unidades de precio) la tendencia es alcista:
-                    #     quiero estar COMPRADO. Si queda por debajo por mas de M: quiero estar
-                    #     FUERA. Entre medio no cambio de opinion (histeresis, evita ordenes por
-                    #     ruido).
-                    #   * Para no dividir se compara L*suma_corta con S*suma_larga.
+                    # ALGORITMO (reversion a la media, referencia exacta: algo/trade_ref.py)
+                    #   * Media de los ultimos L precios. Si el precio cae mas de TIN unidades
+                    #     bajo la media, se espera que vuelva: quiero estar COMPRADO. Si el precio
+                    #     sube mas de TOUT unidades sobre la media (TOUT = 0: vuelve a la media),
+                    #     quiero estar FUERA. Entre medio no cambio de opinion.
+                    #   * Para no dividir se usa d = L*p - suma = L*(p - media) y se compara con
+                    #     -TIN*L y TOUT*L.
                     #   * Cantidad: comprado -> compra todo lo que alcance (max. 63 por orden);
                     #     fuera -> vende todo lo que tiene (max. 63 por orden).
+                    #   * Parametros elegidos con la serie de practica (algo/tune_practica.py).
                     #
                     # PROTOCOLO (enunciado 2.2): la orden escrita en DECISION despues de recibir
                     # p[n] la ejecuta la maestra al precio p[n+1]. Por eso al llegar cada precio
-                    # primero se aplica la orden pendiente a la copia propia de la contabilidad.
+                    # primero se aplica la orden pendiente a la copia propia de la contabilidad,
+                    # con las mismas reglas que tb/tb_proyecto_4.sv.
                     #
                     # RESTRICCIONES DEL CORE: sin MUL/DIV y con los shifts deshabilitados.
-                    #   * x*K constante -> lazo de K sumas.
+                    #   * L*p           -> duplicaciones: suma p, 2p, 4p... segun los bits de L.
                     #   * cantidad que alcanza (caja-C)/p -> lazo de sumas de p (afford).
                     #   * n*p de una venta -> lazo de n sumas.
                     #
                     # Mapa de memoria
-                    #   0x0000_0000  programa (BRAM)
+                    #   0x0000_0000  programa (BRAM de 2 KB)
                     #   0x0000_0700  buffer circular de L precios (palabras de 32 bits)
                     #   0x8000_0000  perifericos: +0 display 7 seg, +4 LEDs, +0xC contador ciclos
                     #   0x8001_0000  SPI: +0 STATUS (bit0 = precio nuevo), +4 PRICE, +8 DECISION
@@ -32,23 +34,23 @@
                     # Registros (todos "globales", no hay pila)
                     #   s0 = base SPI          s1 = caja ($)          tp = acciones
                     #   gp = ultimo byte escrito en DECISION (orden pendiente)
-                    #   a2 = suma corta        a3 = suma larga        a4 = indice del buffer (bytes)
+                    #   a3 = suma de los ultimos L precios            a4 = indice del buffer (bytes)
                     #   a5 = precios recibidos (satura en L)          sp = 1 quiero estar comprado
                     #   a0 = precio actual     ra = retorno de afford
-                    #   t0, t1, t2, a1 = temporales
+                    #   t0, t1, t2, a1, a2 = temporales
                     # =============================================================================
                     
                     # ----------------------------- Parametros ------------------------------------
-                    .equ S,       3                 # ventana corta (ticks)
-                    .equ L,       10                # ventana larga (ticks), 2 <= L <= 64, S < L
-                    .equ M,       1                 # histeresis (unidades de precio)
+                    .equ L,       60                # ventana de la media (ticks), 2 <= L <= 64
+                    .equ TIN,     4                 # entrar: precio TIN unidades bajo la media
+                    .equ TOUT,    0                 # salir: precio TOUT unidades sobre la media
                     .equ CASH0,   10000             # caja inicial
                     .equ FEE,     5                 # comision por orden ejecutada
                     .equ QMAX,    63                # cantidad maxima por orden
                     
-                    .equ THR,     M * S * L         # umbral para L*suma_corta - S*suma_larga
+                    .equ THR_IN,  -TIN * L          # d <  THR_IN  -> comprado
+                    .equ THR_OUT, TOUT * L          # d >  THR_OUT -> fuera
                     .equ LBYTES,  4 * L             # largo del buffer en bytes
-                    .equ SOFF,    4 * (L - S)       # desplazamiento al precio de hace S ticks
                     
                     .equ PERIPH,  0x80000000
                     .equ SPI,     0x80010000
@@ -64,150 +66,146 @@
 00000008  71048493  
 0000000c  00000213      li   tp, 0
 00000010  00000193      li   gp, 0
-00000014  00000613      li   a2, 0
-00000018  00000693      li   a3, 0
-0000001c  00000713      li   a4, 0
-00000020  00000793      li   a5, 0
-00000024  00000113      li   sp, 0
-00000028  00000293      li   t0, 0                      # buffer en cero (la BRAM puede venir con basura)
-0000002c  02800313      li   t1, LBYTES
+00000014  00000693      li   a3, 0
+00000018  00000713      li   a4, 0
+0000001c  00000793      li   a5, 0
+00000020  00000113      li   sp, 0
+00000024  00000293      li   t0, 0                      # buffer en cero (la BRAM puede venir con basura)
+00000028  0f000313      li   t1, LBYTES
                     clear:
-00000030  7002a023      sw   zero, BUF(t0)
-00000034  00428293      addi t0, t0, 4
-00000038  fe629ce3      bne  t0, t1, clear
-0000003c  00042423      sw   zero, 8(s0)                # DECISION = mantener
+0000002c  7002a023      sw   zero, BUF(t0)
+00000030  00428293      addi t0, t0, 4
+00000034  fe629ce3      bne  t0, t1, clear
+00000038  00042423      sw   zero, 8(s0)                # DECISION = mantener
                     
                     # ----------------------------- Ciclo principal -------------------------------
                     wait:                               # 1) esperar precio
-00000040  00042283      lw   t0, 0(s0)                  # STATUS
-00000044  0012f293      andi t0, t0, 1
-00000048  fe028ce3      beqz t0, wait
-0000004c  00442503      lw   a0, 4(s0)                  # PRICE (leerlo baja el bit de precio nuevo)
+0000003c  00042283      lw   t0, 0(s0)                  # STATUS
+00000040  0012f293      andi t0, t0, 1
+00000044  fe028ce3      beqz t0, wait
+00000048  00442503      lw   a0, 4(s0)                  # PRICE (leerlo baja el bit de precio nuevo)
                     
                         # 2) aplicar la orden pendiente al precio recien llegado
                     apply:
-00000050  03f1f593      andi a1, gp, 63                 # q
-00000054  04058a63      beqz a1, update
-00000058  0c01f293      andi t0, gp, 0xC0
-0000005c  04000313      li   t1, ACT_BUY
-00000060  00629c63      bne  t0, t1, apply_sell
-00000064  13c000ef      call afford                     # t0 = n, t1 = costo (FEE + n*p)
-00000068  04028063      beqz t0, update
-0000006c  406484b3      sub  s1, s1, t1
-00000070  00520233      add  tp, tp, t0
-00000074  0340006f      j    update
+0000004c  03f1f593      andi a1, gp, 63                 # q
+00000050  06058063      beqz a1, update
+00000054  0c01f293      andi t0, gp, 0xC0
+00000058  04000313      li   t1, ACT_BUY
+0000005c  00629c63      bne  t0, t1, apply_sell
+00000060  134000ef      call afford                     # t0 = n, t1 = costo (FEE + n*p)
+00000064  04028663      beqz t0, update
+00000068  406484b3      sub  s1, s1, t1
+0000006c  00520233      add  tp, tp, t0
+00000070  0400006f      j    update
                     apply_sell:
-00000078  08000313      li   t1, ACT_SELL
-0000007c  02629663      bne  t0, t1, update             # 0xC0 = reservado = mantener
-00000080  00b27463      bgeu tp, a1, sell_n             # n = min(q, acciones)
-00000084  00020593      mv   a1, tp
+00000074  08000313      li   t1, ACT_SELL
+00000078  02629c63      bne  t0, t1, update             # 0xC0 = reservado = mantener
+0000007c  00b27463      bgeu tp, a1, sell_n             # n = min(q, acciones)
+00000080  00020593      mv   a1, tp
                     sell_n:
-00000088  02058063      beqz a1, update
-0000008c  40b20233      sub  tp, tp, a1
-00000090  00000313      li   t1, 0                      # t1 = n*p con sumas
+00000084  02058663      beqz a1, update
+00000088  00000313      li   t1, 0                      # t1 = n*p con sumas
+0000008c  00058393      mv   t2, a1
                     sell_mul:
-00000094  00a30333      add  t1, t1, a0
-00000098  fff58593      addi a1, a1, -1
-0000009c  fe059ce3      bnez a1, sell_mul
-000000a0  006484b3      add  s1, s1, t1
-000000a4  ffb48493      addi s1, s1, -FEE
+00000090  00a30333      add  t1, t1, a0
+00000094  fff38393      addi t2, t2, -1
+00000098  fe039ce3      bnez t2, sell_mul
+0000009c  00648333      add  t1, s1, t1                 # caja + n*p
+000000a0  00500393      li   t2, FEE
+000000a4  00734663      blt  t1, t2, update             # la maestra no vende si caja + n*p < C
+000000a8  407304b3      sub  s1, t1, t2
+000000ac  40b20233      sub  tp, tp, a1
                     
-                        # 3) actualizar ventanas moviles (buffer circular)
+                        # 3) actualizar la ventana movil (buffer circular)
                     update:
-000000a8  70072283      lw   t0, BUF(a4)                # precio de hace L ticks (sale de la larga)
-000000ac  405502b3      sub  t0, a0, t0
-000000b0  005686b3      add  a3, a3, t0
-000000b4  01c70393      addi t2, a4, SOFF               # precio de hace S ticks (sale de la corta)
-000000b8  02800313      li   t1, LBYTES
-000000bc  0063c463      blt  t2, t1, s_ok
-000000c0  406383b3      sub  t2, t2, t1
-                    s_ok:
-000000c4  7003a283      lw   t0, BUF(t2)
-000000c8  405502b3      sub  t0, a0, t0
-000000cc  00560633      add  a2, a2, t0
-000000d0  70a72023      sw   a0, BUF(a4)
-000000d4  00470713      addi a4, a4, 4
-000000d8  00671463      bne  a4, t1, idx_ok
-000000dc  00000713      li   a4, 0
+000000b0  70072283      lw   t0, BUF(a4)                # precio de hace L ticks
+000000b4  405502b3      sub  t0, a0, t0
+000000b8  005686b3      add  a3, a3, t0                 # suma += p - viejo
+000000bc  70a72023      sw   a0, BUF(a4)
+000000c0  00470713      addi a4, a4, 4
+000000c4  0f000313      li   t1, LBYTES
+000000c8  00671463      bne  a4, t1, idx_ok
+000000cc  00000713      li   a4, 0
                     idx_ok:
-000000e0  00a00313      li   t1, L                      # calentamiento: hasta tener L precios
-000000e4  00678663      beq  a5, t1, signal
-000000e8  00178793      addi a5, a5, 1
-000000ec  04679663      bne  a5, t1, decide
+000000d0  03c00313      li   t1, L                      # calentamiento: hasta tener L precios
+000000d4  00678663      beq  a5, t1, signal
+000000d8  00178793      addi a5, a5, 1
+000000dc  04679863      bne  a5, t1, decide
                     
-                        # 4) senal: diff = L*suma_corta - S*suma_larga
+                        # 4) senal: d = L*p - suma, con L*p por duplicaciones
                     signal:
-000000f0  00000293      li   t0, 0
-000000f4  00a00393      li   t2, L
+000000e0  00000293      li   t0, 0                      # acumulado
+000000e4  00050313      mv   t1, a0                     # p * 2^k
+000000e8  00100393      li   t2, 1                      # mascara del bit k de L
                     mul_l:
-000000f8  00c282b3      add  t0, t0, a2
-000000fc  fff38393      addi t2, t2, -1
-00000100  fe039ce3      bnez t2, mul_l
-00000104  00000313      li   t1, 0
-00000108  00300393      li   t2, S
-                    mul_s:
-0000010c  00d30333      add  t1, t1, a3
-00000110  fff38393      addi t2, t2, -1
-00000114  fe039ce3      bnez t2, mul_s
-00000118  406282b3      sub  t0, t0, t1
-0000011c  01e00313      li   t1, THR
-00000120  00535663      ble  t0, t1, not_up
-00000124  00100113      li   sp, 1                      # tendencia alcista: quiero estar comprado
-00000128  0100006f      j    decide
-                    not_up:
-0000012c  fe200313      li   t1, -THR
-00000130  0062d463      bge  t0, t1, decide             # dentro de la banda: sin cambio
-00000134  00000113      li   sp, 0                      # tendencia bajista: quiero estar fuera
+000000ec  03c00593      li   a1, L
+000000f0  0075f5b3      and  a1, a1, t2
+000000f4  00058463      beqz a1, mul_next
+000000f8  006282b3      add  t0, t0, t1
+                    mul_next:
+000000fc  00630333      add  t1, t1, t1
+00000100  007383b3      add  t2, t2, t2
+00000104  10000593      li   a1, 256                    # L < 256: 8 bits
+00000108  feb3e2e3      bltu t2, a1, mul_l
+0000010c  40d282b3      sub  t0, t0, a3                 # d
+00000110  f1000313      li   t1, THR_IN
+00000114  0062d663      bge  t0, t1, not_low
+00000118  00100113      li   sp, 1                      # muy bajo la media: quiero estar comprado
+0000011c  0100006f      j    decide
+                    not_low:
+00000120  00000313      li   t1, THR_OUT
+00000124  00535463      ble  t0, t1, decide             # en la banda: sin cambio
+00000128  00000113      li   sp, 0                      # volvio sobre la media: quiero estar fuera
                     
                         # 5) decidir cantidad y escribir DECISION
                     decide:
-00000138  00000193      li   gp, 0
-0000013c  00010c63      beqz sp, dec_sell
-00000140  03f00593      li   a1, QMAX
-00000144  05c000ef      call afford
-00000148  02028263      beqz t0, out
-0000014c  0402e193      ori  gp, t0, ACT_BUY
-00000150  01c0006f      j    out
+0000012c  00000193      li   gp, 0
+00000130  00010c63      beqz sp, dec_sell
+00000134  03f00593      li   a1, QMAX
+00000138  05c000ef      call afford
+0000013c  02028263      beqz t0, out
+00000140  0402e193      ori  gp, t0, ACT_BUY
+00000144  01c0006f      j    out
                     dec_sell:
-00000154  00020293      mv   t0, tp                     # vender min(63, acciones)
-00000158  03f00313      li   t1, QMAX
-0000015c  00537463      bleu t0, t1, ds_ok
-00000160  00030293      mv   t0, t1
+00000148  00020293      mv   t0, tp                     # vender min(63, acciones)
+0000014c  03f00313      li   t1, QMAX
+00000150  00537463      bleu t0, t1, ds_ok
+00000154  00030293      mv   t0, t1
                     ds_ok:
-00000164  00028463      beqz t0, out
-00000168  0802e193      ori  gp, t0, ACT_SELL
+00000158  00028463      beqz t0, out
+0000015c  0802e193      ori  gp, t0, ACT_SELL
                     out:
-0000016c  00342423      sw   gp, 8(s0)                  # DECISION
+00000160  00342423      sw   gp, 8(s0)                  # DECISION
                     
                         # 6) display: precio en hexadecimal; LEDs: 0 = comprado, 1 = compra, 2 = venta
-00000170  80000337      li   t1, PERIPH
-00000174  00a32023      sw   a0, 0(t1)
-00000178  00010393      mv   t2, sp
-0000017c  0c01f293      andi t0, gp, 0xC0
-00000180  04000593      li   a1, ACT_BUY
-00000184  00b29463      bne  t0, a1, led_s
-00000188  0023e393      ori  t2, t2, 2
+00000164  80000337      li   t1, PERIPH
+00000168  00a32023      sw   a0, 0(t1)
+0000016c  00010393      mv   t2, sp
+00000170  0c01f293      andi t0, gp, 0xC0
+00000174  04000593      li   a1, ACT_BUY
+00000178  00b29463      bne  t0, a1, led_s
+0000017c  0023e393      ori  t2, t2, 2
                     led_s:
-0000018c  08000593      li   a1, ACT_SELL
-00000190  00b29463      bne  t0, a1, led_w
-00000194  0043e393      ori  t2, t2, 4
+00000180  08000593      li   a1, ACT_SELL
+00000184  00b29463      bne  t0, a1, led_w
+00000188  0043e393      ori  t2, t2, 4
                     led_w:
-00000198  00732223      sw   t2, 4(t1)
-0000019c  ea5ff06f      j    wait
+0000018c  00732223      sw   t2, 4(t1)
+00000190  eadff06f      j    wait
                     
                     # ----------------------------- Subrutina -------------------------------------
                     # afford: mayor n <= a1 tal que FEE + n*p <= caja.
                     #   entrada: a0 = p, a1 = maximo, s1 = caja
                     #   salida:  t0 = n, t1 = FEE + n*p      (usa t2)
                     afford:
-000001a0  00000293      li   t0, 0
-000001a4  00500313      li   t1, FEE
-000001a8  00058c63      beqz a1, aff_end
+00000194  00000293      li   t0, 0
+00000198  00500313      li   t1, FEE
+0000019c  00058c63      beqz a1, aff_end
                     aff_loop:
-000001ac  00a303b3      add  t2, t1, a0
-000001b0  0074e863      bltu s1, t2, aff_end            # caja < costo con una accion mas
-000001b4  00038313      mv   t1, t2
-000001b8  00128293      addi t0, t0, 1
-000001bc  feb298e3      bne  t0, a1, aff_loop
+000001a0  00a303b3      add  t2, t1, a0
+000001a4  0074e863      bltu s1, t2, aff_end            # caja < costo con una accion mas
+000001a8  00038313      mv   t1, t2
+000001ac  00128293      addi t0, t0, 1
+000001b0  feb298e3      bne  t0, a1, aff_loop
                     aff_end:
-000001c0  00008067      ret
+000001b4  00008067      ret

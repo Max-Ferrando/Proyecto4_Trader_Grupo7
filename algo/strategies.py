@@ -129,3 +129,26 @@ class EmaCross(Base):
         d = self.es - self.el
         thr = self.m << 8
         return 1 if d > thr else (-1 if d < -thr else 0)
+
+
+class MeanRevert2(Base):
+    """Reversion a la media con umbrales de entrada y salida (algoritmo final).
+
+    d = L*p - suma de los ultimos L precios  (= L * (p - media))
+      d < -TIN*L  -> el precio cayo TIN bajo la media: quiero estar COMPRADO
+      d >  TOUT*L -> el precio volvio sobre la media + TOUT: quiero estar FUERA
+    """
+    def __init__(self, L=60, tin=4, tout=0, **kw):
+        super().__init__(**kw)
+        self.L, self.ti, self.to = L, tin, tout
+
+    def signal(self):
+        h = self.hist
+        if len(h) < self.L:
+            return 0
+        d = self.L * h[-1] - sum(h[-self.L:])
+        if d < -self.ti * self.L:
+            return 1
+        if d > self.to * self.L:
+            return -1
+        return 0

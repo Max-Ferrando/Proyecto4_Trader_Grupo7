@@ -11,7 +11,9 @@ es exactamente el de trade.s.
 SOLO PARA PROBAR LA PLACA: la version de la competencia es sw/trade.s (las
 reglas no permiten guardar series de precios en el diseno).
 
-Uso: python3 tools/make_demo.py [serie.csv] [-n 96]
+Uso: python3 tools/make_demo.py [serie.csv] [-n 200] [--desde 9100]
+Por defecto usa 200 precios de tb/practica.csv desde el tick 9100, un tramo
+donde el agente compra y vende varias veces (los primeros 60 son calentamiento).
 """
 import argparse
 import os
@@ -47,10 +49,11 @@ demo_ok:
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("csv", nargs="?")
-    ap.add_argument("-n", type=int, default=96)
+    ap.add_argument("-n", type=int, default=200)
+    ap.add_argument("--desde", type=int, default=9100)
     a = ap.parse_args()
-    prices = series.load_csv(a.csv) if a.csv else series.make("tendencias", 0)
-    prices = prices[:a.n]
+    path = a.csv or os.path.join(ROOT, "tb", "practica.csv")
+    prices = series.load_csv(path)[a.desde:a.desde + a.n]
     src = open(os.path.join(ROOT, "sw", "trade.s")).read()
     assert OLD_WAIT in src, "no encontre el bloque de espera en trade.s"
     src = src.replace(OLD_WAIT, NEW_WAIT)
@@ -59,7 +62,7 @@ def main():
                       "    sw   zero, DEMO_IDX(zero)       # DEMO: empieza en el primer precio\n")
     head = ("# GENERADO por tools/make_demo.py a partir de sw/trade.s. NO EDITAR.\n"
             "# Version DEMO: lee precios de una tabla (solo para probar la placa).\n"
-            ".equ DELAY,    1600000             # ~0,3 s por tick a 25 MHz\n"
+            ".equ DELAY,    2500000             # ~0,5 s por tick a 25 MHz\n"
             f".equ DEMO_N,   {len(prices)}\n"
             ".equ DEMO_IDX, 0x6FC               # indice de la tabla, justo antes del buffer\n")
     tab = "\n# ----------------------------- Tabla DEMO ------------------------------------\ndemo_tab:\n"

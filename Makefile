@@ -9,23 +9,24 @@
 #   make bin / prog  sintesis, place & route, bitstream y programar la placa
 #   make demo        version DEMO (precios de una tabla interna) y programar la placa
 #   make test        pruebas del assembler
+#   make tb          testbench OFICIAL del curso (tb/tb_proyecto_4.sv)
 #
 # Variables: SERIE=data/serie.csv  N=ticks  TICK=2500 (ronda 3: 0,1 ms a 25 MHz)
 # En Windows (Git Bash) usar PYTHON=python.
 
 PYTHON ?= python3
 ASM    := $(PYTHON) tools/rvasm.py
-SERIE  ?= data/serie_sintetica.csv
-N      ?= 1000
+SERIE  ?= tb/practica.csv
+N      ?= 2000
 TICK   ?= 2500
 
-TOP  := game_top
+TOP  := pochoco_soc
 PCF  := goboard.pcf
 FREQ := 25
-SRC  := $(wildcard rtl/fpga/*.v rtl/common/*.v rtl/common/espino_core/*.v)
+SRC  := $(wildcard rtl/*.v rtl/espino_core/*.v)
 CELLS := $(shell yosys-config --datdir 2>/dev/null)/ice40/cells_sim.v
 
-.PHONY: all algo ref hex sim check profile bin prog demo demo-bin test clean
+.PHONY: all algo ref hex sim check profile bin prog demo demo-bin test tb clean
 
 all: bin
 
@@ -78,8 +79,14 @@ demo-bin: demo.bin
 demo: demo.bin
 	iceprog demo.bin
 
+# Testbench oficial del curso: misma serie, contabilidad oficial y 4 chequeos
+tb: sw/trade.hex
+	mkdir -p sim/out
+	iverilog -g2012 -s tb_proyecto_4 -o sim/out/tb_p4 $(CELLS) $(SRC) tb/tb_proyecto_4.sv
+	vvp -n sim/out/tb_p4
+
 test:
 	$(PYTHON) tools/test_rvasm.py
 
 clean:
-	rm -rf sim/out build $(TOP).json $(TOP).asc $(TOP).bin demo.json demo.asc demo.bin
+	rm -rf sim/out build decisiones.csv $(TOP).json $(TOP).asc $(TOP).bin demo.json demo.asc demo.bin

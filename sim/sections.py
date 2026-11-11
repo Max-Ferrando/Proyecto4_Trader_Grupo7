@@ -12,7 +12,7 @@ SECTIONS = {            # etiqueta que abre la seccion -> nombre
     "wait": "esperar precio (sondeo)",
     "apply": "aplicar orden pendiente",
     "update": "ventanas moviles",
-    "signal": "senal (L*sc - S*sl)",
+    "signal": "senal (L*p - suma)",
     "decide": "decidir cantidad",
     "out": "escribir DECISION + display",
     "afford": "afford (lazo de sumas)",

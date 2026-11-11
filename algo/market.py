@@ -14,13 +14,10 @@ Reproduce las reglas del enunciado (secciones 2.2 a 2.4):
   * Venta: entrega q*p - C y no puede superar las acciones que se tienen.
   * Patrimonio W[n] = caja[n] + acciones[n] * p[n].
 
-Supuestos (el enunciado no los fija; se cambian aqui si la maestra oficial
-hace otra cosa):
-  * Una orden que termina con 0 acciones (q = 0, sin caja o sin acciones) no
-    se ejecuta y no paga comision.
-  * Una venta mayor que las acciones disponibles vende todas las disponibles.
-  * Una compra solo se ejecuta si la caja alcanza para al menos 1 accion mas
-    la comision.
+Contabilidad identica a la del testbench oficial (tb/tb_proyecto_4.sv):
+  * Compra: q = min(q, (caja - C) // p); se ejecuta si q > 0.
+  * Venta: q = min(q, acciones); se ejecuta si q > 0 y caja + q*p >= C.
+  * Una orden que termina con 0 acciones no se ejecuta y no paga comision.
 """
 
 CASH0 = 10_000
@@ -50,7 +47,7 @@ def execute(byte, price, cash, shares, fee=FEE):
             return cash - q * price - fee, shares + q, True
     elif action == SELL and q > 0:
         q = min(q, shares)
-        if q > 0:
+        if q > 0 and cash + q * price >= fee:      # igual que tb_proyecto_4.sv
             return cash + q * price - fee, shares - q, True
     return cash, shares, False
 
@@ -119,3 +116,10 @@ class BuyAndHold:
         q = min(63, (self.cash - self.fee) // p) if self.cash > self.fee else 0
         self.pending = encode(BUY, q) if q > 0 else 0
         return self.pending
+
+
+def buy_and_hold_official(prices, cash0=CASH0, fee=FEE):
+    """'Comprar y mantener' como lo calcula tb_proyecto_4.sv: una sola compra de
+    todo lo que alcanza al precio del tick 0 (sin el tope de 63)."""
+    q = (cash0 - fee) // prices[0]
+    return cash0 - fee - q * prices[0] + q * prices[-1]
