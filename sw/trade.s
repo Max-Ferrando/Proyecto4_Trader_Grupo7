@@ -4,16 +4,15 @@
 #
 # Ensamblar:  python3 tools/rvasm.py sw/trade.s -o sw/trade.hex -l sw/trade.lst
 #
-# ALGORITMO (reversion a la media, referencia exacta: algo/trade_ref.py)
-#   * Media de los ultimos L precios. Si el precio cae mas de TIN unidades
-#     bajo la media, se espera que vuelva: quiero estar COMPRADO. Si el precio
-#     sube mas de TOUT unidades sobre la media (TOUT = 0: vuelve a la media),
-#     quiero estar FUERA. Entre medio no cambio de opinion.
-#   * Para no dividir se usa d = L*p - suma = L*(p - media) y se compara con
-#     -TIN*L y TOUT*L.
+# ALGORITMO (cruce de medias moviles, referencia exacta: algo/trade_ref.py)
+#   * Media corta de S precios y media larga de L precios. Si la corta supera
+#     a la larga por mas de M (en unidades de precio), el precio viene
+#     subiendo: quiero estar COMPRADO. Si queda por debajo por mas de M:
+#     quiero estar FUERA. Entre medio no cambio de opinion (histeresis).
+#   * Para no dividir se compara L*suma_corta con S*suma_larga.
 #   * Cantidad: comprado -> compra todo lo que alcance (max. 63 por orden);
 #     fuera -> vende todo lo que tiene (max. 63 por orden).
-#   * Parametros elegidos con la serie de practica (algo/tune_practica.py).
+#   * Parametros elegidos con las dos series de practica (algo/tune_all2.py).
 #
 # PROTOCOLO (enunciado 2.2): la orden escrita en DECISION despues de recibir
 # p[n] la ejecuta la maestra al precio p[n+1]. Por eso al llegar cada precio
@@ -21,40 +20,40 @@
 # con las mismas reglas que tb/tb_proyecto_4.sv.
 #
 # RESTRICCIONES DEL CORE: sin MUL/DIV y con los shifts deshabilitados.
-#   * L*p           -> duplicaciones: suma p, 2p, 4p... segun los bits de L.
+#   * x*K constante -> duplicaciones: suma x, 2x, 4x... segun los bits de K.
 #   * cantidad que alcanza (caja-C)/p -> lazo de sumas de p (afford).
 #   * n*p de una venta -> lazo de n sumas.
 #
 # Mapa de memoria
 #   0x0000_0000  programa (BRAM de 2 KB)
-#   0x0000_0700  buffer circular de L precios (palabras de 32 bits)
+#   0x0000_0600  buffer circular de L precios (palabras de 32 bits)
 #   0x8000_0000  perifericos: +0 display 7 seg, +4 LEDs, +0xC contador ciclos
 #   0x8001_0000  SPI: +0 STATUS (bit0 = precio nuevo), +4 PRICE, +8 DECISION
 #
 # Registros (todos "globales", no hay pila)
 #   s0 = base SPI          s1 = caja ($)          tp = acciones
 #   gp = ultimo byte escrito en DECISION (orden pendiente)
-#   a3 = suma de los ultimos L precios            a4 = indice del buffer (bytes)
+#   a2 = suma corta (S)    a3 = suma larga (L)    a4 = indice del buffer (bytes)
 #   a5 = precios recibidos (satura en L)          sp = 1 quiero estar comprado
 #   a0 = precio actual     ra = retorno de afford
-#   t0, t1, t2, a1, a2 = temporales
+#   t0, t1, t2, a1 = temporales
 # =============================================================================
 
 # ----------------------------- Parametros ------------------------------------
-.equ L,       60                # ventana de la media (ticks), 2 <= L <= 64
-.equ TIN,     4                 # entrar: precio TIN unidades bajo la media
-.equ TOUT,    0                 # salir: precio TOUT unidades sobre la media
+.equ S,       20                # ventana corta (ticks)
+.equ L,       120               # ventana larga (ticks), S < L <= 120
+.equ M,       8                 # histeresis (unidades de precio)
 .equ CASH0,   10000             # caja inicial
 .equ FEE,     5                 # comision por orden ejecutada
 .equ QMAX,    63                # cantidad maxima por orden
 
-.equ THR_IN,  -TIN * L          # d <  THR_IN  -> comprado
-.equ THR_OUT, TOUT * L          # d >  THR_OUT -> fuera
+.equ THR,     M * S * L         # umbral para L*suma_corta - S*suma_larga
 .equ LBYTES,  4 * L             # largo del buffer en bytes
+.equ SOFF,    4 * (L - S)       # desplazamiento al precio de hace S ticks
 
 .equ PERIPH,  0x80000000
 .equ SPI,     0x80010000
-.equ BUF,     0x700             # cabe en el inmediato de 12 bits de lw/sw
+.equ BUF,     0x600             # cabe en el inmediato de 12 bits de lw/sw
 
 .equ ACT_BUY,  0x40
 .equ ACT_SELL, 0x80
@@ -65,6 +64,7 @@ start:
     li   s1, CASH0
     li   tp, 0
     li   gp, 0
+    li   a2, 0
     li   a3, 0
     li   a4, 0
     li   a5, 0
@@ -115,14 +115,21 @@ sell_mul:
     sub  s1, t1, t2
     sub  tp, tp, a1
 
-    # 3) actualizar la ventana movil (buffer circular)
+    # 3) actualizar las ventanas moviles (buffer circular)
 update:
-    lw   t0, BUF(a4)                # precio de hace L ticks
+    lw   t0, BUF(a4)                # precio de hace L ticks (sale de la larga)
     sub  t0, a0, t0
-    add  a3, a3, t0                 # suma += p - viejo
+    add  a3, a3, t0
+    addi t2, a4, SOFF               # precio de hace S ticks (sale de la corta)
+    li   t1, LBYTES
+    blt  t2, t1, s_ok
+    sub  t2, t2, t1
+s_ok:
+    lw   t0, BUF(t2)
+    sub  t0, a0, t0
+    add  a2, a2, t0
     sw   a0, BUF(a4)
     addi a4, a4, 4
-    li   t1, LBYTES
     bne  a4, t1, idx_ok
     li   a4, 0
 idx_ok:
@@ -131,30 +138,44 @@ idx_ok:
     addi a5, a5, 1
     bne  a5, t1, decide
 
-    # 4) senal: d = L*p - suma, con L*p por duplicaciones
+    # 4) senal: diff = L*suma_corta - S*suma_larga
+    #    Multiplicacion por constante con duplicaciones: recorre los 8 bits de
+    #    la constante con una mascara y suma x, 2x, 4x... (ra se usa como
+    #    registro temporal: aqui no hay ninguna llamada en curso).
 signal:
-    li   t0, 0                      # acumulado
-    mv   t1, a0                     # p * 2^k
-    li   t2, 1                      # mascara del bit k de L
+    li   t0, 0                      # t0 = L * suma_corta
+    mv   t1, a2
+    li   t2, 1
 mul_l:
-    li   a1, L
-    and  a1, a1, t2
-    beqz a1, mul_next
+    andi a1, t2, L
+    beqz a1, mul_l_next
     add  t0, t0, t1
-mul_next:
+mul_l_next:
     add  t1, t1, t1
     add  t2, t2, t2
-    li   a1, 256                    # L < 256: 8 bits
+    li   a1, 256
     bltu t2, a1, mul_l
-    sub  t0, t0, a3                 # d
-    li   t1, THR_IN
-    bge  t0, t1, not_low
-    li   sp, 1                      # muy bajo la media: quiero estar comprado
+    li   ra, 0                      # ra = S * suma_larga
+    mv   t1, a3
+    li   t2, 1
+mul_s:
+    andi a1, t2, S
+    beqz a1, mul_s_next
+    add  ra, ra, t1
+mul_s_next:
+    add  t1, t1, t1
+    add  t2, t2, t2
+    li   a1, 256
+    bltu t2, a1, mul_s
+    sub  t0, t0, ra                 # diff
+    li   t1, THR
+    ble  t0, t1, not_up
+    li   sp, 1                      # tendencia alcista: quiero estar comprado
     j    decide
-not_low:
-    li   t1, THR_OUT
-    ble  t0, t1, decide             # en la banda: sin cambio
-    li   sp, 0                      # volvio sobre la media: quiero estar fuera
+not_up:
+    li   t1, -THR
+    bge  t0, t1, decide             # dentro de la banda: sin cambio
+    li   sp, 0                      # tendencia bajista: quiero estar fuera
 
     # 5) decidir cantidad y escribir DECISION
 decide:

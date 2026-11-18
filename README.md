@@ -6,9 +6,11 @@ Integrantes: Lucas Fernández · Maximiliano Ferrando · Renato Rivadeneira · M
 Agente de inversión que corre en el Pochoco SoC (Espino Core, RV32E) sobre la Go Board. La FPGA maestra
 envía por SPI un precio por tick; `sw/trade.s` responde en el registro DECISION si compra, vende o mantiene.
 
-**Algoritmo:** reversión a la media. Con la media de los últimos 60 precios, compra cuando el precio cae
-4 unidades bajo la media y vende cuando vuelve a la media. Parámetros elegidos con la serie de práctica
-(`algo/tune_practica.py`, `algo/tune_mr.py`), validados en 10 tramos de 2.000 ticks.
+**Algoritmo:** cruce de medias móviles. Si la media de los últimos 20 precios supera a la de los últimos 120
+por más de 8 unidades, el precio viene subiendo y el agente compra; si queda por debajo por más de 8, vende.
+Parámetros elegidos con las **dos** series de práctica oficiales (`tb/practica.csv` y `tb/practica_meta.csv`,
+ver `algo/tune_all2.py`): es la configuración que gana a *comprar y mantener* y a *no operar* en ambas, dentro
+de una zona estable de parámetros.
 
 ## Estructura
 
@@ -17,7 +19,7 @@ envía por SPI un precio por tick; `sw/trade.s` responde en el registro DECISION
 | `rtl/` | Pochoco SoC: `pochoco_soc.v` (top de la Go Board, parámetro `MemFile`), memoria, periféricos, esclavo SPI, contador de ciclos |
 | `rtl/espino_core/` | Espino Core (RV32E) y el banco de registros con BRAM del iCE40 |
 | `sw/trade.s` | El agente en assembly |
-| `tb/` | Testbench **oficial** del curso (`tb_proyecto_4.sv`) y la serie de práctica (`practica.csv`) |
+| `tb/` | Testbench **oficial** del curso (`tb_proyecto_4.sv`) y las dos series de práctica (`practica.csv`, `practica_meta.csv`) |
 | `algo/` | Simulador del mercado (`market.py`, misma contabilidad que el testbench oficial), estrategias, ajuste de parámetros y la referencia exacta de `trade.s` (`trade_ref.py`) |
 | `sim/` | Testbench propio: compara cada decisión con Python y mide IC, ciclos y CPI por tick y por sección |
 | `tools/` | Assembler del grupo (`rvasm.py`; `pochoasm.py` es un alias para el comando del testbench oficial) y generador de la demo |
@@ -43,21 +45,19 @@ o simplemente `make tb`. Debe terminar con `Testbenchs aprobados: 4/4`.
 
 En Windows (Git Bash) agregar `PYTHON=python`.
 
-## Resultados con la serie de práctica
+## Resultados con las series de práctica (20.000 ticks)
 
-| | Patrimonio final | Órdenes | Pérdida máx. |
-|---|---|---|---|
-| **trade.s, 20.000 ticks** | **$31.558** | 533 | $4.476 |
-| Comprar y mantener (definición del testbench) | $6.497 | 1 | — |
-| No operar | $10.000 | 0 | — |
-| **trade.s, testbench oficial (20.000 ticks)** | **$31.558** | 533 | $4.476 |
-| trade.s, testbench oficial (2.000 ticks, configuración por defecto) | $11.167 | 63 | $1.919 |
+| Serie | trade.s | Órdenes | Pérdida máx. | Comprar y mantener | No operar |
+|---|---|---|---|---|---|
+| `practica.csv` | **$11.413** | 23 | $4.743 | $6.497 | $10.000 |
+| `practica_meta.csv` | **$13.851** | 11 | $2.960 | $9.695 | $10.000 |
 
-* Testbench oficial con los 20.000 ticks y el período de la ronda 3: **4/4 aprobados**; peor caso 1.628 ciclos
-  de 2.262 disponibles. El patrimonio, las órdenes y la pérdida máxima coinciden exactamente con `algo/trade_ref.py`.
-* Testbench propio (5.000 ticks): las 5.000 decisiones son idénticas a Python; peor caso 1.627 ciclos
-  hasta escribir DECISION (65 µs), CPI ≈ 2,2.
+* Testbench oficial: **4/4 aprobados**. Con su configuración por defecto (2.000 ticks de `practica.csv`):
+  patrimonio $8.688 contra $6.695 de comprar y mantener; peor caso 1.048 ciclos de 2.262.
+* El patrimonio de cada tick del testbench oficial coincide exactamente con `algo/trade_ref.py`.
 * Diseño en el iCE40 HX1K: 1.163 / 1.280 celdas lógicas (91 %), 12 / 16 BRAM, Fmax ≈ 44,7 MHz.
+* Historia: la reversión a la media (ventana 60) ganaba $31.558 en `practica.csv` pero perdía en
+  `practica_meta.csv` ($7.513); por eso se cambió a una estrategia que gana en las dos.
 
 ## Versiones
 

@@ -12,5 +12,5 @@ module tb_demo;
              dut.u_periph.digit_q, dut.u_spi.tx_hold);
     last <= led;
   end
-  initial begin #(40*400000); $finish; end
+  initial begin #(40*600000); $finish; end
 endmodule

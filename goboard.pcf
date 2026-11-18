@@ -36,7 +36,7 @@ set_io o_Segment2_F 8
 set_io o_Segment2_G 96
 
 # PMOD SPI Signals
-set_io i_SPI_CS_n 65
+set_io -pullup yes i_SPI_CS_n 65
 set_io i_SPI_MOSI 64
 set_io o_SPI_MISO 63
 set_io i_SPI_SCLK 62

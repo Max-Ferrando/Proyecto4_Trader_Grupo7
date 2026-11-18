@@ -1,43 +1,45 @@
 """trade_ref.py - Modelo de referencia EXACTO de sw/trade.s.
 
-Algoritmo: reversion a la media (strategies.MeanRevert2) escrito como lo
-ejecuta el Espino: buffer circular de L precios, suma movil actualizada con una
-suma y una resta, L*p con duplicaciones (sin MUL ni shifts) y la cantidad a
-comprar con un lazo de sumas.
+Algoritmo: cruce de medias moviles (strategies.SmaCross) escrito como lo
+ejecuta el Espino: buffer circular de L precios, dos sumas moviles que se
+actualizan con una suma y una resta, multiplicacion por constante con
+duplicaciones (sin MUL ni shifts) y la cantidad con un lazo de sumas.
+
+Parametros elegidos con las DOS series de practica oficiales
+(tb/practica.csv y tb/practica_meta.csv; ver algo/tune_all2.py).
 
 Uso:
   python3 algo/trade_ref.py tb/practica.csv [-o decisiones.txt]
-  python3 algo/trade_ref.py --check     (coincide con strategies.MeanRevert2)
-
-Los parametros L, TIN, TOUT deben ser los mismos .equ de sw/trade.s.
+  python3 algo/trade_ref.py --check     (coincide con strategies.SmaCross)
 """
 import argparse
+import os
 import sys
 
 import market
 import series
 import strategies
 
-L = 60         # ventana de la media (ticks), maximo 64
-TIN = 4        # comprar si el precio esta TIN unidades bajo la media
-TOUT = 0       # vender si el precio esta TOUT unidades sobre la media
+S = 20         # ventana corta (ticks)
+L = 120        # ventana larga (ticks), maximo 120 (buffer de 0x600 a 0x7DF)
+M = 8          # histeresis: margen en unidades de precio
 FEE = market.FEE
 CASH0 = market.CASH0
+ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
 
 
 class TradeRef:
-    def __init__(self, L=L, tin=TIN, tout=TOUT, cash0=CASH0, fee=FEE):
-        self.L, self.tin, self.tout, self.fee = L, tin, tout, fee
+    def __init__(self, S=S, L=L, M=M, cash0=CASH0, fee=FEE):
+        self.S, self.L, self.M, self.fee = S, L, M, fee
         self.cash, self.shares = cash0, 0       # s1, tp
-        self.pending = 0                        # gp: ultimo byte escrito en DECISION
+        self.pending = 0                        # gp
         self.buf = [0] * L                      # buffer circular en RAM
         self.idx = 0                            # a4
         self.count = 0                          # a5
-        self.sum_l = 0                          # a3
+        self.sum_s = self.sum_l = 0             # a2, a3
         self.want = 0                           # sp
 
     def afford(self, p, qmax):
-        """Mayor n <= qmax con fee + n*p <= caja. Devuelve (n, costo)."""
         n, cost = 0, self.fee
         while n < qmax and cost + p <= self.cash:
             cost += p
@@ -46,7 +48,7 @@ class TradeRef:
 
     @staticmethod
     def mul_const(x, k):
-        """x*k con duplicaciones: recorre los bits de k (8 bits) con una mascara."""
+        """x*k con duplicaciones: recorre los 8 bits de k con una mascara."""
         acc, pw, mask = 0, x, 1
         while mask < 256:
             if k & mask:
@@ -56,7 +58,7 @@ class TradeRef:
         return acc
 
     def step(self, p):
-        # 1) La maestra ejecuto el byte anterior al precio p: copia propia
+        # 1) orden pendiente ejecutada por la maestra al precio p
         action, q = self.pending >> 6, self.pending & 63
         if action == 1 and q:
             n, cost = self.afford(p, q)
@@ -67,25 +69,29 @@ class TradeRef:
             n = min(q, self.shares)
             if n:
                 acc = 0
-                for _ in range(n):           # n*p con sumas
+                for _ in range(n):
                     acc += p
                 if self.cash + acc >= self.fee:
                     self.cash += acc - self.fee
                     self.shares -= n
-        # 2) Ventana movil
-        self.sum_l += p - self.buf[self.idx]
+        # 2) ventanas moviles
+        old_l = self.buf[self.idx]
+        old_s = self.buf[(self.idx + self.L - self.S) % self.L]
+        self.sum_l += p - old_l
+        self.sum_s += p - old_s
         self.buf[self.idx] = p
         self.idx = (self.idx + 1) % self.L
         if self.count < self.L:
             self.count += 1
-        # 3) Senal: d = L*p - suma
+        # 3) senal: L*suma_corta - S*suma_larga contra M*S*L
         if self.count == self.L:
-            d = self.mul_const(p, self.L) - self.sum_l
-            if d < -self.tin * self.L:
+            diff = self.mul_const(self.sum_s, self.L) - self.mul_const(self.sum_l, self.S)
+            thr = self.M * self.S * self.L
+            if diff > thr:
                 self.want = 1
-            elif d > self.tout * self.L:
+            elif diff < -thr:
                 self.want = 0
-        # 4) Cantidad
+        # 4) cantidad
         if self.want:
             n, _ = self.afford(p, 63)
             byte = 0x40 | n if n else 0
@@ -98,15 +104,18 @@ class TradeRef:
 
 def check(seeds=10):
     suite = dict(series.suite(seeds))
-    suite[("practica", 0)] = series.load_csv("../tb/practica.csv") if __import__("os").path.exists("../tb/practica.csv") else series.load_csv("tb/practica.csv")
+    for name in ("practica.csv", "practica_meta.csv"):
+        path = os.path.join(ROOT, "tb", name)
+        if os.path.exists(path):
+            suite[(name, 0)] = series.load_csv(path)
     bad = 0
     for key, prices in suite.items():
         a = market.run(prices, TradeRef())["decisions"]
-        b = market.run(prices, strategies.MeanRevert2(L, TIN, TOUT))["decisions"]
+        b = market.run(prices, strategies.SmaCross(S, L, M))["decisions"]
         if a != b:
             bad += 1
             print("DIFERENTE:", key)
-    print(f"trade_ref == MeanRevert2 en {len(suite) - bad} de {len(suite)} series")
+    print(f"trade_ref == SmaCross({S},{L},{M}) en {len(suite) - bad} de {len(suite)} series")
     return bad == 0
 
 
