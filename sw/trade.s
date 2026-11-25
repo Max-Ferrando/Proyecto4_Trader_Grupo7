@@ -100,6 +100,7 @@ wait:                               # 1) esperar precio
 
     # 2) aplicar la orden pendiente al precio recien llegado
 apply:
+    j    update
     andi a1, gp, 63                 # q
     beqz a1, update
     andi t0, gp, 0xC0
@@ -237,21 +238,9 @@ tr_done:
 
     # 5) decidir cantidad y escribir DECISION
 decide:
-    li   gp, 0
-    beqz sp, dec_sell
-    li   a1, QMAX
-    call afford
-    beqz t0, out
-    ori  gp, t0, ACT_BUY
-    j    out
-dec_sell:
-    mv   t0, tp                     # vender min(63, acciones)
-    li   t1, QMAX
-    bleu t0, t1, ds_ok
-    mv   t0, t1
-ds_ok:
-    beqz t0, out
-    ori  gp, t0, ACT_SELL
+    li   gp, 0xBF
+    beqz sp, out
+    li   gp, 0x7F
 out:
     sw   gp, 8(s0)                  # DECISION
 
