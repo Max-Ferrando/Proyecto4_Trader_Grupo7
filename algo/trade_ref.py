@@ -1,7 +1,13 @@
 """trade_ref.py - Modelo de referencia EXACTO de sw/trade.s.
 
-Algoritmo: cruce de medias moviles (strategies.SmaCross) escrito como lo
-ejecuta el Espino: buffer circular de L precios, dos sumas moviles que se
+Algoritmo HIBRIDO (tendencia + reversion a la media), escrito como lo
+ejecuta el Espino:
+  * tendencia: cruce de medias S/L con margen M  -> estado "trend"
+  * reversion: precio TIN bajo la media de LM precios -> estado "mr" (se apaga
+    cuando el precio supera la media + TOUT)
+  * quiero estar comprado si trend, o si mr y NO hay bajada fuerte
+    (media corta mas de M2 bajo la larga).
+Estructura: buffer circular de L precios, dos sumas moviles que se
 actualizan con una suma y una resta, multiplicacion por constante con
 duplicaciones (sin MUL ni shifts) y la cantidad con un lazo de sumas.
 
@@ -23,6 +29,10 @@ import strategies
 S = 20         # ventana corta (ticks)
 L = 120        # ventana larga (ticks), maximo 120 (buffer de 0x600 a 0x7DF)
 M = 8          # histeresis: margen en unidades de precio
+LM = 60        # ventana de la reversion a la media (LM <= L)
+TIN = 4        # entra si el precio esta TIN bajo la media LM
+TOUT = 0       # sale si el precio esta TOUT sobre la media LM
+M2 = 4         # bajada fuerte: media corta mas de M2 bajo la larga
 FEE = market.FEE
 CASH0 = market.CASH0
 ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
@@ -37,6 +47,8 @@ class TradeRef:
         self.idx = 0                            # a4
         self.count = 0                          # a5
         self.sum_s = self.sum_l = 0             # a2, a3
+        self.sum_m = 0                          # RAM (SUMM)
+        self.trend = self.mr = 0                # RAM (STATE bit0, bit1)
         self.want = 0                           # sp
 
     def afford(self, p, qmax):
@@ -79,18 +91,26 @@ class TradeRef:
         old_s = self.buf[(self.idx + self.L - self.S) % self.L]
         self.sum_l += p - old_l
         self.sum_s += p - old_s
+        self.sum_m += p - self.buf[(self.idx + self.L - LM) % self.L]
         self.buf[self.idx] = p
         self.idx = (self.idx + 1) % self.L
         if self.count < self.L:
             self.count += 1
-        # 3) senal: L*suma_corta - S*suma_larga contra M*S*L
+        # 3) senal
         if self.count == self.L:
+            d = self.mul_const(p, LM) - self.sum_m
+            if d < -TIN * LM:
+                self.mr = 1
+            elif d > TOUT * LM:
+                self.mr = 0
             diff = self.mul_const(self.sum_s, self.L) - self.mul_const(self.sum_l, self.S)
             thr = self.M * self.S * self.L
             if diff > thr:
-                self.want = 1
+                self.trend = 1
             elif diff < -thr:
-                self.want = 0
+                self.trend = 0
+            down = diff < -M2 * self.S * self.L
+            self.want = 1 if (self.trend or (self.mr and not down)) else 0
         # 4) cantidad
         if self.want:
             n, _ = self.afford(p, 63)
@@ -103,6 +123,28 @@ class TradeRef:
 
 
 def check(seeds=10):
+    """Compara con una implementacion independiente (sumas directas sobre la historia)."""
+    def simple(prices):
+        out, hist, cash, sh, pend, trend, mr = [], [], CASH0, 0, 0, 0, 0
+        for x in prices:
+            cash, sh, _ = market.execute(pend, x, cash, sh, FEE)
+            hist.append(x)
+            want = 0
+            if len(hist) >= L:
+                diff = L * sum(hist[-S:]) - S * sum(hist[-L:])
+                if diff > M * S * L: trend = 1
+                elif diff < -M * S * L: trend = 0
+                d = LM * x - sum(hist[-LM:])
+                if d < -TIN * LM: mr = 1
+                elif d > TOUT * LM: mr = 0
+                want = trend or (mr and not diff < -M2 * S * L)
+            if want:
+                k = min(63, (cash - FEE) // x) if cash > FEE else 0
+                pend = 0x40 | k if k > 0 else 0
+            else:
+                k = min(63, sh); pend = 0x80 | k if k > 0 else 0
+            out.append(pend)
+        return out
     suite = dict(series.suite(seeds))
     for name in ("practica.csv", "practica_meta.csv"):
         path = os.path.join(ROOT, "tb", name)
@@ -110,12 +152,10 @@ def check(seeds=10):
             suite[(name, 0)] = series.load_csv(path)
     bad = 0
     for key, prices in suite.items():
-        a = market.run(prices, TradeRef())["decisions"]
-        b = market.run(prices, strategies.SmaCross(S, L, M))["decisions"]
-        if a != b:
+        if market.run(prices, TradeRef())["decisions"] != simple(prices):
             bad += 1
             print("DIFERENTE:", key)
-    print(f"trade_ref == SmaCross({S},{L},{M}) en {len(suite) - bad} de {len(suite)} series")
+    print(f"trade_ref == implementacion directa en {len(suite) - bad} de {len(suite)} series")
     return bad == 0
 
 

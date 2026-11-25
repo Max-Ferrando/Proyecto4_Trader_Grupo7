@@ -37,11 +37,22 @@ module pochoco_soc #(
 );
 
   // Power-on reset (FPGA): el bitstream inicializa por_cnt en 0.
-  reg  [3:0] por_cnt = 4'b0;
+  // [PROYECTO 4] En la placa el reset dura 2^20 ciclos (~42 ms): las BRAM del
+  // iCE40 no entregan datos validos en los primeros instantes despues de la
+  // configuracion, y con un reset de solo 15 ciclos el core podia ejecutar
+  // basura al encender (registros sin inicializar). En simulacion se mantiene
+  // el reset corto para no cambiar los tiempos del testbench.
+`ifdef SYNTHESIS
+  localparam PorBits = 20;
+`else
+  localparam PorBits = 4;
+`endif
+  reg  [PorBits-1:0] por_cnt = {PorBits{1'b0}};
+  wire por_done = &por_cnt;
   always @(posedge i_Clk) begin
-    if (por_cnt != 4'hF) por_cnt <= por_cnt + 4'd1;
+    if (!por_done) por_cnt <= por_cnt + 1'b1;
   end
-  wire rst_n = (por_cnt == 4'hF);
+  wire rst_n = por_done;
 
   wire [6:0] seg1_o, seg2_o;
 

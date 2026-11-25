@@ -49,7 +49,7 @@ demo_ok:
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("csv", nargs="?")
-    ap.add_argument("-n", type=int, default=240)
+    ap.add_argument("-n", type=int, default=200)
     ap.add_argument("--desde", type=int, default=4700)
     a = ap.parse_args()
     path = a.csv or os.path.join(ROOT, "tb", "practica.csv")
@@ -69,7 +69,7 @@ def main():
     for i in range(0, len(prices), 8):
         tab += "    .word " + ", ".join(str(p) for p in prices[i:i + 8]) + "\n"
     # La tabla no puede pisar DEMO_IDX (0x5FC) ni el buffer (0x600)
-    assert len(prices) <= 240, "la tabla DEMO admite a lo mas 240 precios"
+    assert len(prices) <= 200, "la tabla DEMO admite a lo mas 200 precios"
     out = os.path.join(ROOT, "sw", "trade_demo.s")
     open(out, "w").write(head + src + tab)
     print(f"{out}: {len(prices)} precios")

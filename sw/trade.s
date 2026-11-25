@@ -4,15 +4,18 @@
 #
 # Ensamblar:  python3 tools/rvasm.py sw/trade.s -o sw/trade.hex -l sw/trade.lst
 #
-# ALGORITMO (cruce de medias moviles, referencia exacta: algo/trade_ref.py)
-#   * Media corta de S precios y media larga de L precios. Si la corta supera
-#     a la larga por mas de M (en unidades de precio), el precio viene
-#     subiendo: quiero estar COMPRADO. Si queda por debajo por mas de M:
-#     quiero estar FUERA. Entre medio no cambio de opinion (histeresis).
-#   * Para no dividir se compara L*suma_corta con S*suma_larga.
+# ALGORITMO HIBRIDO (referencia exacta: algo/trade_ref.py)
+#   * Tendencia: media corta (S) contra media larga (L). Si la corta supera a
+#     la larga por mas de M -> trend = 1; si queda mas de M por debajo -> 0.
+#   * Reversion a la media: si el precio cae mas de TIN bajo la media de LM
+#     precios -> mr = 1; si sube mas de TOUT sobre esa media -> mr = 0.
+#   * Quiero estar COMPRADO si trend, o si mr y no hay bajada fuerte (media
+#     corta mas de M2 bajo la larga). Si no, quiero estar FUERA.
+#   * Sin divisiones: se comparan sumas escaladas (L*suma_corta con
+#     S*suma_larga, y LM*precio con la suma de LM precios).
 #   * Cantidad: comprado -> compra todo lo que alcance (max. 63 por orden);
 #     fuera -> vende todo lo que tiene (max. 63 por orden).
-#   * Parametros elegidos con las dos series de practica (algo/tune_all2.py).
+#   * Parametros elegidos con las dos series de practica.
 #
 # PROTOCOLO (enunciado 2.2): la orden escrita en DECISION despues de recibir
 # p[n] la ejecuta la maestra al precio p[n+1]. Por eso al llegar cada precio
@@ -26,6 +29,7 @@
 #
 # Mapa de memoria
 #   0x0000_0000  programa (BRAM de 2 KB)
+#   0x0000_05F0  SUMM: suma de los ultimos LM precios   0x5F4 STATE: bit0 trend, bit1 mr
 #   0x0000_0600  buffer circular de L precios (palabras de 32 bits)
 #   0x8000_0000  perifericos: +0 display 7 seg, +4 LEDs, +0xC contador ciclos
 #   0x8001_0000  SPI: +0 STATUS (bit0 = precio nuevo), +4 PRICE, +8 DECISION
@@ -43,6 +47,10 @@
 .equ S,       20                # ventana corta (ticks)
 .equ L,       120               # ventana larga (ticks), S < L <= 120
 .equ M,       8                 # histeresis (unidades de precio)
+.equ LM,      60                # ventana de la reversion a la media (LM <= L)
+.equ TIN,     4                 # mr = 1 si el precio esta TIN bajo la media LM
+.equ TOUT,    0                 # mr = 0 si el precio esta TOUT sobre la media LM
+.equ M2,      4                 # bajada fuerte: corta mas de M2 bajo la larga
 .equ CASH0,   10000             # caja inicial
 .equ FEE,     5                 # comision por orden ejecutada
 .equ QMAX,    63                # cantidad maxima por orden
@@ -50,6 +58,10 @@
 .equ THR,     M * S * L         # umbral para L*suma_corta - S*suma_larga
 .equ LBYTES,  4 * L             # largo del buffer en bytes
 .equ SOFF,    4 * (L - S)       # desplazamiento al precio de hace S ticks
+.equ MOFF,    4 * (L - LM)      # desplazamiento al precio de hace LM ticks
+.equ THR2,    M2 * S * L        # umbral de bajada fuerte
+.equ SUMM,    0x5F0
+.equ STATE,   0x5F4
 
 .equ PERIPH,  0x80000000
 .equ SPI,     0x80010000
@@ -75,6 +87,8 @@ clear:
     sw   zero, BUF(t0)
     addi t0, t0, 4
     bne  t0, t1, clear
+    sw   zero, SUMM(zero)
+    sw   zero, STATE(zero)
     sw   zero, 8(s0)                # DECISION = mantener
 
 # ----------------------------- Ciclo principal -------------------------------
@@ -128,6 +142,15 @@ s_ok:
     lw   t0, BUF(t2)
     sub  t0, a0, t0
     add  a2, a2, t0
+    addi t2, a4, MOFF               # precio de hace LM ticks (sale de la media LM)
+    blt  t2, t1, m_ok
+    sub  t2, t2, t1
+m_ok:
+    lw   t0, BUF(t2)
+    sub  t0, a0, t0
+    lw   t2, SUMM(zero)
+    add  t2, t2, t0
+    sw   t2, SUMM(zero)
     sw   a0, BUF(a4)
     addi a4, a4, 4
     bne  a4, t1, idx_ok
@@ -143,6 +166,31 @@ idx_ok:
     #    la constante con una mascara y suma x, 2x, 4x... (ra se usa como
     #    registro temporal: aqui no hay ninguna llamada en curso).
 signal:
+    li   ra, 0                      # ra = LM * precio
+    mv   t1, a0
+    li   t2, 1
+mul_m:
+    andi a1, t2, LM
+    beqz a1, mul_m_next
+    add  ra, ra, t1
+mul_m_next:
+    add  t1, t1, t1
+    add  t2, t2, t2
+    li   a1, 256
+    bltu t2, a1, mul_m
+    lw   t1, SUMM(zero)
+    sub  ra, ra, t1                 # d = LM*p - suma = LM*(p - media)
+    lw   a1, STATE(zero)
+    li   t1, -TIN * LM
+    bge  ra, t1, mr_not_low
+    ori  a1, a1, 2                  # muy bajo la media: mr = 1
+    j    mr_done
+mr_not_low:
+    li   t1, TOUT * LM
+    ble  ra, t1, mr_done
+    andi a1, a1, 1                  # volvio sobre la media: mr = 0
+mr_done:
+    sw   a1, STATE(zero)
     li   t0, 0                      # t0 = L * suma_corta
     mv   t1, a2
     li   t2, 1
@@ -168,14 +216,24 @@ mul_s_next:
     li   a1, 256
     bltu t2, a1, mul_s
     sub  t0, t0, ra                 # diff
+    lw   a1, STATE(zero)
     li   t1, THR
-    ble  t0, t1, not_up
-    li   sp, 1                      # tendencia alcista: quiero estar comprado
-    j    decide
-not_up:
+    ble  t0, t1, tr_not_up
+    ori  a1, a1, 1                  # tendencia alcista: trend = 1
+    j    tr_done
+tr_not_up:
     li   t1, -THR
-    bge  t0, t1, decide             # dentro de la banda: sin cambio
-    li   sp, 0                      # tendencia bajista: quiero estar fuera
+    bge  t0, t1, tr_done
+    andi a1, a1, 2                  # tendencia bajista: trend = 0
+tr_done:
+    sw   a1, STATE(zero)
+    andi sp, a1, 1                  # quiero = trend ...
+    bnez sp, decide
+    li   t1, -THR2
+    blt  t0, t1, decide             # bajada fuerte: fuera
+    andi t1, a1, 2
+    beqz t1, decide
+    li   sp, 1                      # ... o mr sin bajada fuerte
 
     # 5) decidir cantidad y escribir DECISION
 decide:

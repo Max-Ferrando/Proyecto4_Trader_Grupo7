@@ -6,11 +6,10 @@ Integrantes: Lucas Fernández · Maximiliano Ferrando · Renato Rivadeneira · M
 Agente de inversión que corre en el Pochoco SoC (Espino Core, RV32E) sobre la Go Board. La FPGA maestra
 envía por SPI un precio por tick; `sw/trade.s` responde en el registro DECISION si compra, vende o mantiene.
 
-**Algoritmo:** cruce de medias móviles. Si la media de los últimos 20 precios supera a la de los últimos 120
-por más de 8 unidades, el precio viene subiendo y el agente compra; si queda por debajo por más de 8, vende.
-Parámetros elegidos con las **dos** series de práctica oficiales (`tb/practica.csv` y `tb/practica_meta.csv`,
-ver `algo/tune_all2.py`): es la configuración que gana a *comprar y mantener* y a *no operar* en ambas, dentro
-de una zona estable de parámetros.
+**Algoritmo:** híbrido de tendencia y reversión a la media. Tendencia: media de 20 precios contra media de 120
+(margen 8). Reversión: compra cuando el precio cae 4 bajo la media de 60 precios y sale al volver a ella, salvo
+que haya una bajada fuerte (media corta más de 4 bajo la larga). Parámetros elegidos con las **dos** series de
+práctica oficiales (`tb/practica.csv` y `tb/practica_meta.csv`).
 
 ## Estructura
 
@@ -49,15 +48,16 @@ En Windows (Git Bash) agregar `PYTHON=python`.
 
 | Serie | trade.s | Órdenes | Pérdida máx. | Comprar y mantener | No operar |
 |---|---|---|---|---|---|
-| `practica.csv` | **$11.413** | 23 | $4.743 | $6.497 | $10.000 |
-| `practica_meta.csv` | **$13.851** | 11 | $2.960 | $9.695 | $10.000 |
+| `practica.csv` | **$16.372** | 373 | $4.956 | $6.497 | $10.000 |
+| `practica_meta.csv` | **$14.960** | 216 | $4.554 | $9.695 | $10.000 |
 
-* Testbench oficial: **4/4 aprobados**. Con su configuración por defecto (2.000 ticks de `practica.csv`):
-  patrimonio $8.688 contra $6.695 de comprar y mantener; peor caso 1.048 ciclos de 2.262.
-* El patrimonio de cada tick del testbench oficial coincide exactamente con `algo/trade_ref.py`.
-* Diseño en el iCE40 HX1K: 1.163 / 1.280 celdas lógicas (91 %), 12 / 16 BRAM, Fmax ≈ 44,7 MHz.
-* Historia: la reversión a la media (ventana 60) ganaba $31.558 en `practica.csv` pero perdía en
-  `practica_meta.csv` ($7.513); por eso se cambió a una estrategia que gana en las dos.
+* Testbench oficial: **4/4 aprobados**; el patrimonio de cada tick coincide con `algo/trade_ref.py`.
+* Peor caso forzado (`tb/peor_caso.csv`): 1.907 ciclos de 2.262 disponibles en la ronda 3.
+* Diseño en el iCE40 HX1K: ~1.190 / 1.280 celdas lógicas, 12 / 16 BRAM, Fmax ≈ 43 MHz.
+* El reset de encendido dura 2^20 ciclos (~42 ms) en la placa: con el reset corto del repo base el core podía
+  partir antes de que las BRAM estuvieran listas y no leía el SPI.
+* Historia: reversión pura ($31.558 / $7.513) y cruce de medias puro ($11.413 / $13.851) fueron descartados
+  por el híbrido, que rinde mejor en la peor de las dos series.
 
 ## Versiones
 
