@@ -28,6 +28,11 @@ PCF  := goboard.pcf
 FREQ := 25
 SRC  := $(wildcard rtl/*.v rtl/espino_core/*.v)
 CELLS := $(shell yosys-config --datdir 2>/dev/null)/ice40/cells_sim.v
+# En Windows yosys-config entrega una ruta que no existe: se busca junto a yosys
+ifeq ($(wildcard $(CELLS)),)
+  YCELLS := $(dir $(shell which yosys 2>/dev/null))../share/yosys/ice40/cells_sim.v
+  CELLS := $(shell cygpath -m "$(YCELLS)" 2>/dev/null || echo "$(YCELLS)")
+endif
 
 # ---------------- variantes de co-diseno ----------------
 #   base  solo software: core original y sw/trade.s  (la que compite)
