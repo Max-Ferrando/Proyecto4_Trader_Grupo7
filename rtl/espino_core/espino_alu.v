@@ -69,10 +69,18 @@ module espino_alu (
       ALU_AND:  result_o = operand_a_i & operand_b_i;
       ALU_SLT:  result_o = {31'b0, cmp_lt};
       ALU_SLTU: result_o = {31'b0, cmp_ltu};
-      // Shifts disabled to save LUTs
-      // ALU_SLL:  result_o = operand_a_i << shamt;
-      // ALU_SRL:  result_o = operand_a_i >> shamt;
-      // ALU_SRA:  result_o = a_s >>> shamt;
+      // Shifts deshabilitados para ahorrar LUTs. [PROYECTO 4] Se pueden
+      // habilitar con -DESPINO_SHIFTER o reemplazar por un multiplicador de
+      // 8x8 con -DESPINO_MUL8 (ocupa el codigo de SLL) solo para medir su
+      // costo en LUTs: ninguna de las dos opciones cabe en la HX1K.
+`ifdef ESPINO_SHIFTER
+      ALU_SLL:  result_o = operand_a_i << shamt;
+      ALU_SRL:  result_o = operand_a_i >> shamt;
+      ALU_SRA:  result_o = a_s >>> shamt;
+`endif
+`ifdef ESPINO_MUL8
+      ALU_SLL:  result_o = {16'b0, operand_a_i[7:0] * operand_b_i[7:0]};
+`endif
       default:  result_o = operand_a_i + operand_b_i;
     endcase
   end

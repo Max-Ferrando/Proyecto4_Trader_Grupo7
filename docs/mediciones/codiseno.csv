@@ -1,0 +1,5 @@
+variante,descripcion,ticks,ic_prom,ciclos_prom,cpi,ciclos_peor,t_prom_us,t_peor_us,ops_s,ops_s_peor,lut4,celdas,bram,fmax_mhz,speedup,amdahl_f,amdahl_pred,amdahl_max
+base,Solo software (core original),40000,82.2,188.3,2.291,209,7.53,8.36,132784,119617,1015,1194,12,44.53,1.0,,,
+pc12,PC de 12 bits,40000,82.2,188.3,2.291,207,7.53,8.28,132796,120773,912,1071,12,45.83,1.0,,,
+mavg,PC12 + sumas moviles en HW,40000,64.8,149.9,2.313,170,6.0,6.8,166780,147059,1024,1196,13,42.71,1.256,0.246,1.238,1.327
+sig,PC12 + senales en HW,40000,51.9,123.1,2.371,143,4.92,5.72,203150,174825,1028,1202,13,42.76,1.53,0.389,1.535,1.636

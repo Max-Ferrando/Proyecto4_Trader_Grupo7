@@ -10,12 +10,12 @@ import sys
 
 SECTIONS = {            # etiqueta que abre la seccion -> nombre
     "wait": "esperar precio (sondeo)",
-    "apply": "aplicar orden pendiente",
     "update": "ventanas moviles",
-    "signal": "senal (L*sc - S*sl)",
-    "decide": "decidir cantidad",
-    "out": "escribir DECISION + display",
-    "afford": "afford (lazo de sumas)",
+    "signal": "senal de reversion (60p - suma60)",
+    "mr_done": "senal de tendencia (6*s20 - s120)",
+    "risk": "stop, cooldown y entrada",
+    "decide": "filtro de saltos y decision",
+    "out": "escribir DECISION + display y LEDs",
 }
 
 

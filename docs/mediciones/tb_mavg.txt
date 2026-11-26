@@ -1,0 +1,4 @@
+tb_mavg: 3000 precios, 9000 lecturas comparadas, 0 errores
+PASS pochoco_mavg coincide con el modelo de referencia
+tb_mavg: 3000 precios, 6000 lecturas comparadas, 0 errores
+PASS pochoco_mavg coincide con el modelo de referencia

@@ -42,6 +42,39 @@ module pochoco_soc #(
   // configuracion, y con un reset de solo 15 ciclos el core podia ejecutar
   // basura al encender (registros sin inicializar). En simulacion se mantiene
   // el reset corto para no cambiar los tiempos del testbench.
+  // ---------------- reloj del sistema ----------------
+  // Variante de co-diseno POCHOCO_PLL: el PLL del iCE40 sube el reloj de 25 MHz
+  // a 37,5 MHz (25 * (DIVF+1) / 2^DIVQ = 25 * 24 / 16; VCO a 600 MHz).
+  // En simulacion no se instancia el PLL: el testbench entrega el reloj ya
+  // multiplicado (ver tb/tb_pll.v y sim/tb_trader.v con -DCLK_HALF_PS).
+`ifdef POCHOCO_PLL
+ `ifdef SYNTHESIS
+  wire clk, pll_lock;
+  SB_PLL40_CORE #(
+    .FEEDBACK_PATH ("SIMPLE"),
+    .DIVR          (4'd0),
+    .DIVF          (7'd23),
+    .DIVQ          (3'd4),
+    .FILTER_RANGE  (3'd2)
+  ) u_pll (
+    .REFERENCECLK  (i_Clk),
+    .PLLOUTGLOBAL  (clk),
+    .LOCK          (pll_lock),
+    .RESETB        (1'b1),
+    .BYPASS        (1'b0)
+  );
+ `else
+  wire clk      = i_Clk;
+  wire pll_lock = 1'b1;
+ `endif
+`else
+  wire clk      = i_Clk;
+  wire pll_lock = 1'b1;
+`endif
+
+  // Reset de encendido: el core parte cuando el contador se llena. En la placa
+  // son 2^20 ciclos (la BRAM del iCE40 necesita tiempo tras la configuracion)
+  // y, con PLL, solo cuenta mientras el PLL esta enganchado.
 `ifdef SYNTHESIS
   localparam PorBits = 20;
 `else
@@ -49,8 +82,9 @@ module pochoco_soc #(
 `endif
   reg  [PorBits-1:0] por_cnt = {PorBits{1'b0}};
   wire por_done = &por_cnt;
-  always @(posedge i_Clk) begin
-    if (!por_done) por_cnt <= por_cnt + 1'b1;
+  always @(posedge clk) begin
+    if (!pll_lock)      por_cnt <= {PorBits{1'b0}};
+    else if (!por_done) por_cnt <= por_cnt + 1'b1;
   end
   wire rst_n = por_done;
 
@@ -65,7 +99,7 @@ module pochoco_soc #(
   wire [31:0] data_addr, data_wdata, data_rdata;
 
   espino_core #(.BootAddr(32'h0000_0000)) u_core (
-    .clk_i         (i_Clk),
+    .clk_i         (clk),
     .rst_ni        (rst_n),
     .instr_req_o   (instr_req),
     .instr_addr_o  (instr_addr),
@@ -80,8 +114,14 @@ module pochoco_soc #(
 
   wire is_mmio, spi_sel, per_sel;
   assign is_mmio = data_addr[31];
-  assign per_sel = is_mmio & ~data_addr[16];
-  assign spi_sel = is_mmio &  data_addr[16];
+`ifdef POCHOCO_MAVG
+  // Variante de co-diseno: periferico de sumas moviles en 0x8002_0000
+  wire mavg_sel = is_mmio & data_addr[17];
+`else
+  wire mavg_sel = 1'b0;
+`endif
+  assign per_sel = is_mmio & ~data_addr[16] & ~mavg_sel;
+  assign spi_sel = is_mmio &  data_addr[16] & ~mavg_sel;
 
   wire mem_b_req, per_req, spi_req;
   assign mem_b_req = data_req & ~is_mmio;
@@ -90,21 +130,40 @@ module pochoco_soc #(
 
   wire [31:0] mem_b_rdata, per_rdata, spi_rdata;
 
-  reg rd_is_per, rd_is_spi;
-  always @(posedge i_Clk or negedge rst_n) begin
+  wire [31:0] mavg_rdata;
+  reg rd_is_per, rd_is_spi, rd_is_mavg;
+  always @(posedge clk or negedge rst_n) begin
     if (!rst_n) begin
       rd_is_per <= 1'b0;
       rd_is_spi <= 1'b0;
+      rd_is_mavg <= 1'b0;
     end else if (data_req & ~data_we) begin
       rd_is_per <= per_sel;
       rd_is_spi <= spi_sel;
+      rd_is_mavg <= mavg_sel;
     end
   end
-  assign data_rdata = rd_is_per ? per_rdata :
-                      rd_is_spi ? spi_rdata : mem_b_rdata;
+  assign data_rdata = rd_is_per  ? per_rdata  :
+                      rd_is_spi  ? spi_rdata  :
+                      rd_is_mavg ? mavg_rdata : mem_b_rdata;
+
+`ifdef POCHOCO_MAVG
+  pochoco_mavg u_mavg (
+    .clk_i   (clk),
+    .rst_ni  (rst_n),
+    .sel_i   (mavg_sel),
+    .req_i   (data_req),
+    .we_i    (data_we),
+    .addr_i  (data_addr[7:0]),
+    .wdata_i (data_wdata),
+    .rdata_o (mavg_rdata)
+  );
+`else
+  assign mavg_rdata = 32'b0;
+`endif
 
   pochoco_mem #(.MemFile(MemFile)) u_mem (
-    .clk_i     (i_Clk),
+    .clk_i     (clk),
     .rst_ni    (rst_n),
     .a_req_i   (instr_req),
     .a_addr_i  (instr_addr),
@@ -118,7 +177,7 @@ module pochoco_soc #(
   );
 
   pochoco_periph u_periph (
-    .clk_i     (i_Clk),
+    .clk_i     (clk),
     .rst_ni    (rst_n),
     .sel_i     (per_sel),
     .req_i     (per_req),
@@ -133,7 +192,7 @@ module pochoco_soc #(
   );
 
   pochoco_spi_slave u_spi (
-    .clk_i      (i_Clk),
+    .clk_i      (clk),
     .rst_ni     (rst_n),
     .sel_i      (spi_sel),
     .req_i      (spi_req),

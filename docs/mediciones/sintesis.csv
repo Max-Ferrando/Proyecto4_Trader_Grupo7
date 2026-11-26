@@ -1,0 +1,8 @@
+variante,lut4,carry,ff,celdas,bram,fmax_mhz,cabe,error
+base,1015,199,342,1194,12,44.53,si,
+pc12,912,140,302,1071,12,45.83,si,
+mavg,1024,198,380,1196,13,42.71,si,
+sig,1028,219,322,1202,13,42.76,si,
+mul8,1081,201,342,1265,12,42.44,si,
+shifter,1399,199,342,1581,12,,no,Unable to place cell 'i_SPI_MOSI_SB_DFFR_D_Q_SB_DFFR_D_Q_SB_DFFER_D_1_
+pll,1024,199,342,,12,,no,"PLL 'u_pll' couldn't be placed anywhere, no suitable BEL found."

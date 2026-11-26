@@ -47,6 +47,11 @@ module pochoco_periph (
 
   // [PROYECTO 2] Contador de ciclos libre (offset 0x0C, solo lectura).
   // [PROYECTO 3] Separado en su propio modulo para trazabilidad de area.
+  // Contador de ciclos del Proyecto 2 (trade.s no lo usa). La variante con el
+  // periferico de sumas moviles lo omite para que el diseno quepa en la HX1K.
+`ifdef POCHOCO_NO_CYCLE_CNT
+  wire [31:0] cycle_q = 32'b0;
+`else
   wire [31:0] cycle_q;
   pochoco_cycle_counter u_cycle_cnt (
     .clk_i   (clk_i),
@@ -56,6 +61,8 @@ module pochoco_periph (
 
   // [PROYECTO 2] Sincronizador de 2 flip-flops para los botones: son
   // entradas asincronas y sin esto pueden provocar metaestabilidad.
+`endif
+
   reg [3:0] btn_meta_q, btn_sync_q;
   always @(posedge clk_i or negedge rst_ni) begin
     if (!rst_ni) begin

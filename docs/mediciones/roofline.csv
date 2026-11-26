@@ -1,0 +1,5 @@
+variante,W_ops,Q_bytes,intensidad,rendimiento_Mops_s,techo_Mops_s,ciclos_kernel
+base,64.7,51.9,1.245,9.15,12.5,176.8
+pc12,64.7,51.9,1.245,9.15,12.5,176.8
+mavg,50.3,39.9,1.262,9.09,12.5,138.4
+sig,38.4,35.9,1.07,8.61,12.5,111.6

@@ -1,0 +1,13 @@
+Patrimonio final:          10699
+Ordenes ejecutadas:        60
+Perdida maxima:            845
+No operar:                 10000
+Comprar y mantener:        6695
+Peor caso precio->decision: 570 ciclos (disponibles: 2262)
+Detalle por tick en decisiones.csv
+PASS MISO sin valores X
+PASS el programa escribe DECISION
+PASS el programa lee todos los precios
+PASS la decision llega antes del siguiente tick
+Testbenchs aprobados: 4/4
+sim/out/pc12/tb_proyecto_4.sv:149: $finish called at 200004000000 (1ps)

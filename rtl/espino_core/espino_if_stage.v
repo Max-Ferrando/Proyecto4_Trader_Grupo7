@@ -31,7 +31,17 @@ module espino_if_stage #(
   reg         valid_q;
   wire        valid_d;
 
+  // [PROYECTO 4] PC angosto: la memoria del SoC es de 2 KB, asi que el PC solo
+  // necesita ESPINO_PC_BITS bits. Forzar a cero los bits altos permite que la
+  // sintesis elimine sus flip-flops y la parte alta de los sumadores PC+4 y
+  // PC+inmediato. Sin el define el core queda identico al original (32 bits).
+`ifdef ESPINO_PC_BITS
+  localparam PcBits = `ESPINO_PC_BITS;
+  wire [31:0] pc_next_full = pc_set_i ? pc_target_i : (pc_q + 32'd4);
+  assign pc_next = {{(32-PcBits){1'b0}}, pc_next_full[PcBits-1:0]};
+`else
   assign pc_next = pc_set_i ? pc_target_i : (pc_q + 32'd4);
+`endif
   assign valid_d = ~pc_set_i;
 
   always @(posedge clk_i or negedge rst_ni) begin
