@@ -82,7 +82,7 @@ python3 tools/figuras.py                     # figuras del informe (requiere mat
   (simulación RTL del SoC completo). Lo mismo se verificó para las variantes `pc12`, `mavg` y `sig`.
 * Testbench oficial: 4/4 aprobados.
 * Por tick: 82 instrucciones y 188 ciclos en promedio (7,5 µs), 209 ciclos en el peor caso; CPI 2,29.
-  En la ronda 3 (2.256 ciclos disponibles) el peor caso usa el 9,3 %.
+  En la ronda 3 (2.262 ciclos disponibles) el peor caso usa el 9,2 %.
 
 | Variante | LUT4 | Celdas (de 1.280) | BRAM | Fmax | Ciclos/tick | Speedup | Amdahl |
 |---|---|---|---|---|---|---|---|

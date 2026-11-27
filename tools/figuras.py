@@ -34,11 +34,6 @@ def miles(x, _):
     return f"{x:,.0f}".replace(",", ".")
 
 
-class BuyHold:
-    def step(self, p):
-        return 0x7F
-
-
 def fig_patrimonio():
     from matplotlib.ticker import FuncFormatter
     fig, axs = plt.subplots(2, 2, figsize=(7.4, 4.7), dpi=170, sharex="col",
@@ -47,7 +42,9 @@ def fig_patrimonio():
     for j, (name, title) in enumerate((("practica", "practica.csv"), ("practica_meta", "practica_meta.csv"))):
         p = series.load_csv(os.path.join(ROOT, "tb", name + ".csv"))
         w = market.run(p, TradeRef())["wealth"]
-        bh = market.run(p, BuyHold())["wealth"]
+        # Comprar y mantener como en tb_proyecto_4.sv: una compra de todo lo que alcanza al tick 0
+        q0 = (market.CASH0 - market.FEE) // p[0]
+        bh = [market.CASH0 - market.FEE - q0 * p[0] + q0 * px for px in p]
         x = range(len(p))
         a, b = axs[0][j], axs[1][j]
         a.plot(x, p, color=MUTED, lw=0.6)
